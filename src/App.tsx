@@ -23,7 +23,9 @@ import {
   Globe,
   Coins,
   User,
-  PieChart as PieChartIcon
+  PieChart as PieChartIcon,
+  Lock,
+  LogOut
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -64,6 +66,13 @@ interface SaleRecord {
   profit: number;
   totalSale: number;
   timestamp: number;
+}
+
+interface User {
+  id: string;
+  email: string;
+  name: string;
+  role: 'admin' | 'manager' | 'seller';
 }
 
 interface AppSettings {
@@ -129,7 +138,18 @@ const translations = {
     exportData: 'Exportar Datos (JSON)',
     importData: 'Importar Datos',
     importSuccess: 'Datos importados con éxito',
-    importError: 'Error al importar datos'
+    importError: 'Error al importar datos',
+    login: 'Iniciar Sesión',
+    register: 'Registrarse',
+    email: 'Correo Electrónico',
+    password: 'Contraseña',
+    logout: 'Cerrar Sesión',
+    noAccount: '¿No tienes cuenta?',
+    hasAccount: '¿Ya tienes cuenta?',
+    role: 'Rol',
+    admin: 'Administrador',
+    seller: 'Vendedor',
+    manager: 'Gerente'
   },
   en: {
     calc: 'Calculator',
@@ -184,7 +204,18 @@ const translations = {
     exportData: 'Export Data (JSON)',
     importData: 'Import Data',
     importSuccess: 'Data imported successfully',
-    importError: 'Error importing data'
+    importError: 'Error importing data',
+    login: 'Login',
+    register: 'Register',
+    email: 'Email',
+    password: 'Password',
+    logout: 'Logout',
+    noAccount: 'No account?',
+    hasAccount: 'Already have an account?',
+    role: 'Role',
+    admin: 'Admin',
+    seller: 'Seller',
+    manager: 'Manager'
   }
 };
 
@@ -235,6 +266,13 @@ const InputField = ({ label, value, onChange, icon: Icon, placeholder, type = "n
 // --- Main Application ---
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+
   const [activeTab, setActiveTab] = useState<'calc' | 'inventory' | 'stats' | 'settings'>('calc');
   const [purchasePrice, setPurchasePrice] = useState<string>('');
   const [salePrice, setSalePrice] = useState<string>('');
@@ -261,15 +299,75 @@ export default function App() {
 
   // Load data from "database"
   useEffect(() => {
-    const savedInv = localStorage.getItem('profit_inventory_v3');
-    if (savedInv) setInventory(JSON.parse(savedInv));
-    
-    const savedSales = localStorage.getItem('profit_sales_v3');
-    if (savedSales) setSalesHistory(JSON.parse(savedSales));
+    const savedToken = localStorage.getItem('profit_token');
+    const savedUser = localStorage.getItem('profit_user');
+    if (savedToken && savedUser) {
+      setToken(savedToken);
+      setUser(JSON.parse(savedUser));
+    }
     
     const savedSettings = localStorage.getItem('profit_settings');
     if (savedSettings) setSettings(JSON.parse(savedSettings));
   }, []);
+
+  useEffect(() => {
+    if (token) {
+      fetchInventory();
+      fetchSales();
+    }
+  }, [token]);
+
+  const fetchInventory = async () => {
+    const res = await fetch('/api/inventory', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (res.ok) setInventory(await res.json());
+  };
+
+  const fetchSales = async () => {
+    const res = await fetch('/api/sales', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (res.ok) setSalesHistory(await res.json());
+  };
+
+  const handleLogin = async () => {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setToken(data.token);
+      setUser(data.user);
+      localStorage.setItem('profit_token', data.token);
+      localStorage.setItem('profit_user', JSON.stringify(data.user));
+    } else {
+      alert('Login failed');
+    }
+  };
+
+  const handleRegister = async () => {
+    const res = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, name })
+    });
+    if (res.ok) {
+      alert('Registration successful, please login');
+      setAuthMode('login');
+    } else {
+      alert('Registration failed');
+    }
+  };
+
+  const handleLogout = () => {
+    setToken(null);
+    setUser(null);
+    localStorage.removeItem('profit_token');
+    localStorage.removeItem('profit_user');
+  };
 
   // Save Settings
   const updateSettings = (newSettings: Partial<AppSettings>) => {
@@ -279,7 +377,7 @@ export default function App() {
   };
 
   // Save to "database"
-  const saveToInventory = () => {
+  const saveToInventory = async () => {
     if (!purchasePrice || !salePrice || !initialStock) return;
     
     const p = parseFloat(purchasePrice);
@@ -289,8 +387,7 @@ export default function App() {
     const unitProfit = s - p;
     const margin = p > 0 ? (unitProfit / p) * 100 : 0;
 
-    const newProduct: Product = {
-      id: Date.now().toString(),
+    const newProduct = {
       name: productName || `${t.productName} ${inventory.length + 1}`,
       category: category || 'General',
       purchasePrice: p,
@@ -306,69 +403,65 @@ export default function App() {
       unit: unit || 'uds'
     };
 
-    const updatedInventory = [newProduct, ...inventory];
-    setInventory(updatedInventory);
-    localStorage.setItem('profit_inventory_v3', JSON.stringify(updatedInventory));
-    
-    clearFields();
-    setShowSaveModal(false);
-    setActiveTab('inventory');
+    const res = await fetch('/api/inventory', {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(newProduct)
+    });
+
+    if (res.ok) {
+      fetchInventory();
+      clearFields();
+      setShowSaveModal(false);
+      setActiveTab('inventory');
+    }
   };
 
-  const recordSale = (id: string) => {
+  const recordSale = async (id: string) => {
+    const res = await fetch('/api/sales', {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ productId: id })
+    });
+
+    if (res.ok) {
+      fetchInventory();
+      fetchSales();
+    }
+  };
+
+  const restockProduct = async (id: string, amount: number) => {
     const product = inventory.find(p => p.id === id);
-    if (!product || product.currentStock <= 0) return;
+    if (!product) return;
 
-    const sale: SaleRecord = {
-      id: Date.now().toString(),
-      productId: id,
-      productName: product.name,
-      quantity: 1,
-      profit: product.unitProfit,
-      totalSale: product.salePrice,
-      timestamp: Date.now()
-    };
-
-    const updatedSales = [sale, ...salesHistory];
-    setSalesHistory(updatedSales);
-    localStorage.setItem('profit_sales_v3', JSON.stringify(updatedSales));
-
-    const updatedInv = inventory.map(item => {
-      if (item.id === id) {
-        const newUnitsSold = item.unitsSold + 1;
-        return {
-          ...item,
-          currentStock: item.currentStock - 1,
-          unitsSold: newUnitsSold,
-          totalProfit: newUnitsSold * item.unitProfit
-        };
-      }
-      return item;
+    const res = await fetch(`/api/inventory/${id}`, {
+      method: 'PUT',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ 
+        currentStock: product.currentStock + amount,
+        initialStock: product.initialStock + amount
+      })
     });
-    setInventory(updatedInv);
-    localStorage.setItem('profit_inventory_v3', JSON.stringify(updatedInv));
+
+    if (res.ok) fetchInventory();
   };
 
-  const restockProduct = (id: string, amount: number) => {
-    const updated = inventory.map(item => {
-      if (item.id === id) {
-        return {
-          ...item,
-          currentStock: item.currentStock + amount,
-          initialStock: item.initialStock + amount
-        };
-      }
-      return item;
-    });
-    setInventory(updated);
-    localStorage.setItem('profit_inventory_v3', JSON.stringify(updated));
-  };
-
-  const deleteProduct = (id: string) => {
+  const deleteProduct = async (id: string) => {
     if (!window.confirm(settings.language === 'es' ? '¿Borrar producto?' : 'Delete product?')) return;
-    const updated = inventory.filter(item => item.id !== id);
-    setInventory(updated);
-    localStorage.setItem('profit_inventory_v3', JSON.stringify(updated));
+    const res = await fetch(`/api/inventory/${id}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (res.ok) fetchInventory();
   };
 
   const exportData = () => {
@@ -452,6 +545,44 @@ export default function App() {
     setUnit('uds');
   };
 
+  if (!token) {
+    return (
+      <div className="min-h-screen bg-[#F8F9FF] text-slate-900 font-sans flex justify-center items-center p-4">
+        <div className="w-full max-w-md flex flex-col gap-6">
+          <div className="flex flex-col items-center gap-4 mb-4">
+            <div className="bg-indigo-600 p-4 rounded-[32px] shadow-xl shadow-indigo-200">
+              <Layers className="text-white" size={40} />
+            </div>
+            <h1 className="text-3xl font-black text-slate-800 tracking-tight">ProfitMaster</h1>
+            <p className="text-slate-500 font-medium">{authMode === 'login' ? t.login : t.register}</p>
+          </div>
+
+          <Card className="flex flex-col gap-5">
+            {authMode === 'register' && (
+              <InputField label={t.userName} value={name} onChange={setName} icon={User} placeholder="Nombre" type="text" />
+            )}
+            <InputField label={t.email} value={email} onChange={setEmail} icon={Globe} placeholder="email@example.com" type="email" />
+            <InputField label={t.password} value={password} onChange={setPassword} icon={Lock} placeholder="••••••••" type="password" />
+            
+            <button 
+              onClick={authMode === 'login' ? handleLogin : handleRegister}
+              className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-bold shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all active:scale-95 mt-2"
+            >
+              {authMode === 'login' ? t.login : t.register}
+            </button>
+          </Card>
+
+          <button 
+            onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
+            className="text-indigo-600 font-bold text-sm hover:underline"
+          >
+            {authMode === 'login' ? t.noAccount : t.hasAccount}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#F8F9FF] text-slate-900 font-sans pb-24 flex justify-center items-start">
       <div className="w-full max-w-md flex flex-col gap-6 p-4 md:p-8">
@@ -464,16 +595,23 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-xl font-bold text-slate-800">
-                {settings.userName ? `Hola, ${settings.userName}` : 'ProfitMaster'}
+                {user ? `Hola, ${user.name}` : 'ProfitMaster'}
               </h1>
-              <p className="text-xs text-slate-500 font-medium">{t.dbActive}</p>
+              <p className="text-xs text-slate-500 font-medium">
+                {user ? `${t.role}: ${t[user.role]}` : t.dbActive}
+              </p>
             </div>
           </div>
-          {activeTab === 'calc' && (
-            <button onClick={clearFields} className="p-3 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-full transition-colors">
-              <Trash2 size={20} />
+          <div className="flex items-center gap-2">
+            {activeTab === 'calc' && (
+              <button onClick={clearFields} className="p-3 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-full transition-colors">
+                <Trash2 size={20} />
+              </button>
+            )}
+            <button onClick={handleLogout} className="p-3 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-full transition-colors">
+              <LogOut size={20} />
             </button>
-          )}
+          </div>
         </header>
 
         {/* Main Content Area */}
