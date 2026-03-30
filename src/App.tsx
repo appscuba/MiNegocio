@@ -149,7 +149,9 @@ const translations = {
     role: 'Rol',
     admin: 'Administrador',
     seller: 'Vendedor',
-    manager: 'Gerente'
+    manager: 'Gerente',
+    editProduct: 'Editar Producto',
+    updateProduct: 'Actualizar Producto'
   },
   en: {
     calc: 'Calculator',
@@ -215,7 +217,9 @@ const translations = {
     role: 'Role',
     admin: 'Admin',
     seller: 'Seller',
-    manager: 'Manager'
+    manager: 'Manager',
+    editProduct: 'Edit Product',
+    updateProduct: 'Update Product'
   }
 };
 
@@ -274,6 +278,7 @@ export default function App() {
   const [name, setName] = useState('');
 
   const [activeTab, setActiveTab] = useState<'calc' | 'inventory' | 'stats' | 'settings'>('calc');
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [purchasePrice, setPurchasePrice] = useState<string>('');
   const [salePrice, setSalePrice] = useState<string>('');
   const [initialStock, setInitialStock] = useState<string>('1');
@@ -387,7 +392,7 @@ export default function App() {
     const unitProfit = s - p;
     const margin = p > 0 ? (unitProfit / p) * 100 : 0;
 
-    const newProduct = {
+    const productData = {
       name: productName || `${t.productName} ${inventory.length + 1}`,
       category: category || 'General',
       purchasePrice: p,
@@ -395,29 +400,54 @@ export default function App() {
       unitProfit,
       margin,
       initialStock: stock,
-      currentStock: stock,
+      currentStock: editingProduct ? editingProduct.currentStock : stock,
       minStock: min,
-      unitsSold: 0,
-      totalProfit: 0,
-      date: new Date().toLocaleDateString(),
+      unitsSold: editingProduct ? editingProduct.unitsSold : 0,
+      totalProfit: editingProduct ? editingProduct.unitsSold * unitProfit : 0,
+      date: editingProduct ? editingProduct.date : new Date().toLocaleDateString(),
       unit: unit || 'uds'
     };
 
-    const res = await fetch('/api/inventory', {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify(newProduct)
-    });
+    let res;
+    if (editingProduct) {
+      res = await fetch(`/api/inventory/${editingProduct.id}`, {
+        method: 'PUT',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(productData)
+      });
+    } else {
+      res = await fetch('/api/inventory', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(productData)
+      });
+    }
 
     if (res.ok) {
       fetchInventory();
       clearFields();
       setShowSaveModal(false);
-      setActiveTab('inventory');
+      setEditingProduct(null);
+      if (!editingProduct) setActiveTab('inventory');
     }
+  };
+
+  const startEditProduct = (product: Product) => {
+    setEditingProduct(product);
+    setProductName(product.name);
+    setCategory(product.category);
+    setPurchasePrice(product.purchasePrice.toString());
+    setSalePrice(product.salePrice.toString());
+    setInitialStock(product.initialStock.toString());
+    setMinStock(product.minStock.toString());
+    setUnit(product.unit);
+    setShowSaveModal(true);
   };
 
   const recordSale = async (id: string) => {
@@ -543,6 +573,7 @@ export default function App() {
     setProductName('');
     setCategory('');
     setUnit('uds');
+    setEditingProduct(null);
   };
 
   if (!token) {
@@ -696,6 +727,9 @@ export default function App() {
                           <span className="text-xs text-slate-400 font-medium">{t.purchasePrice}: {formatCurrency(item.purchasePrice)} • {t.salePrice}: {formatCurrency(item.salePrice)}</span>
                         </div>
                         <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                          <button onClick={() => startEditProduct(item)} className="p-2 text-slate-300 hover:text-indigo-500 transition-all">
+                            <SettingsIcon size={18} />
+                          </button>
                           <button onClick={() => deleteProduct(item.id)} className="p-2 text-slate-300 hover:text-rose-500 transition-all">
                             <Trash2 size={18} />
                           </button>
@@ -957,16 +991,23 @@ export default function App() {
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowSaveModal(false)} className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" />
               <motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative w-full max-w-sm bg-white rounded-[32px] p-8 shadow-2xl">
                 <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-xl font-bold text-slate-800">{t.saveProduct}</h3>
-                  <button onClick={() => setShowSaveModal(false)} className="p-2 text-slate-400 hover:bg-slate-100 rounded-full"><X size={20} /></button>
+                  <h3 className="text-xl font-bold text-slate-800">{editingProduct ? t.editProduct : t.saveProduct}</h3>
+                  <button onClick={() => { setShowSaveModal(false); setEditingProduct(null); }} className="p-2 text-slate-400 hover:bg-slate-100 rounded-full"><X size={20} /></button>
                 </div>
                 <div className="flex flex-col gap-4">
                   <InputField label={t.productName} value={productName} onChange={setProductName} icon={ShoppingBag} placeholder="Ej: Zapatos Cuero" type="text" />
                   <div className="grid grid-cols-2 gap-4">
+                    <InputField label={t.purchasePrice} value={purchasePrice} onChange={setPurchasePrice} icon={ShoppingBag} placeholder="0.00" />
+                    <InputField label={t.salePrice} value={salePrice} onChange={setSalePrice} icon={DollarSign} placeholder="0.00" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
                     <InputField label={t.category} value={category} onChange={setCategory} icon={Layers} placeholder="General" type="text" />
                     <InputField label={t.unitType} value={unit} onChange={setUnit} icon={Package} placeholder="uds" type="text" />
                   </div>
-                  <InputField label={t.minStock} value={minStock} onChange={setMinStock} icon={Info} placeholder="2" helper={t.minStockDesc} />
+                  <div className="grid grid-cols-2 gap-4">
+                    <InputField label={t.initialStock} value={initialStock} onChange={setInitialStock} icon={Package} placeholder="Cantidad" />
+                    <InputField label={t.minStock} value={minStock} onChange={setMinStock} icon={Info} placeholder="2" helper={t.minStockDesc} />
+                  </div>
                   <div className="p-4 bg-indigo-50 rounded-2xl">
                     <p className="text-xs font-bold text-indigo-400 uppercase">Resumen</p>
                     <div className="flex justify-between mt-2">
@@ -976,7 +1017,7 @@ export default function App() {
                   </div>
                 </div>
                 <button onClick={saveToInventory} className="w-full bg-indigo-600 text-white font-bold py-4 rounded-2xl mt-8 shadow-lg shadow-indigo-200 hover:bg-indigo-700 transition-all active:scale-95">
-                  {t.confirmSave}
+                  {editingProduct ? t.updateProduct : t.confirmSave}
                 </button>
               </motion.div>
             </div>
