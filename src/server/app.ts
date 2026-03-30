@@ -14,7 +14,7 @@ const DB_FILE = path.resolve(process.cwd(), 'db.json');
 
 app.use(express.json());
 
-// --- Database Initialization ---
+// --- In-Memory Database (Internal DB) ---
 interface DB {
   users: any[];
   inventory: any[];
@@ -35,26 +35,30 @@ const initialDB: DB = {
   sales: []
 };
 
-// Initialize DB if not exists
-if (!fs.existsSync(DB_FILE)) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(initialDB, null, 2));
+// Global in-memory store for serverless environments
+let memoryDB: DB = initialDB;
+
+// Load from file if possible (local dev)
+try {
+  if (fs.existsSync(DB_FILE)) {
+    const fileData = fs.readFileSync(DB_FILE, 'utf-8');
+    memoryDB = JSON.parse(fileData);
+    console.log('Loaded DB from file');
+  }
+} catch (e) {
+  console.warn('Could not read from DB file, using initial memory state:', e);
 }
 
-const readDB = (): DB => {
-  try {
-    return JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
-  } catch (e) {
-    return initialDB;
-  }
-};
+const readDB = (): DB => memoryDB;
 
 const writeDB = (data: DB) => {
-  // Note: Vercel serverless functions have a read-only filesystem.
-  // For real persistence on Vercel, use a database like Vercel KV, Postgres, or MongoDB.
+  memoryDB = data;
+  // Attempt to persist to file (only works in local dev or writable environments)
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
   } catch (e) {
-    console.warn('Could not write to DB file (expected on serverless environments):', e);
+    // Silently fail on Vercel/Read-only filesystems
+    // The data remains in memoryDB for the current instance lifetime
   }
 };
 
